@@ -8,7 +8,70 @@ const cors = require('cors');
 const axios = require('axios');
 const { createClient } = require('@supabase/supabase-js');
 
-// ─── Startup environment validation ────────────────────────────
+// ═══════════════════════════════════════════════════════════════
+// 🔍 DIAGNOSTIC BLOCK — runs first, before anything else
+// ═══════════════════════════════════════════════════════════════
+console.log('═══════════════════════════════════════════════════════');
+console.log('🔍 ENVIRONMENT DIAGNOSTIC');
+console.log('═══════════════════════════════════════════════════════');
+
+// 1. Show all env vars containing "supa" (case-insensitive)
+const supaKeys = Object.keys(process.env).filter((k) =>
+  k.toLowerCase().includes('supa')
+);
+console.log(`\n1️⃣ Env vars matching "supa": ${supaKeys.length}`);
+if (supaKeys.length === 0) {
+  console.log('   ❌ NONE FOUND — the variable was never passed to the container');
+} else {
+  supaKeys.forEach((k) => {
+    const val = process.env[k] || '';
+    const preview = val.length > 40 ? val.slice(0, 40) + '...' : val;
+    console.log(`   • "${k}" (length ${val.length}) = ${preview}`);
+  });
+}
+
+// 2. Show all env vars containing "SUPA" as exact uppercase
+const exactSupa = Object.keys(process.env).filter((k) =>
+  k.startsWith('SUPA')
+);
+console.log(`\n2️⃣ Env vars starting with "SUPA": ${exactSupa.length}`);
+exactSupa.forEach((k) => console.log(`   • "${k}"`));
+
+// 3. Show every env var name (just names, no values — safe to log)
+console.log(`\n3️⃣ Total env vars available: ${Object.keys(process.env).length}`);
+console.log('   First 15 names:');
+Object.keys(process.env)
+  .slice(0, 15)
+  .forEach((k) => console.log(`   • ${k}`));
+
+// 4. Specific checks
+console.log('\n4️⃣ Specific variable checks:');
+console.log(
+  `   process.env.SUPABASE_URL       = ${
+    process.env.SUPABASE_URL ? '✅ SET' : '❌ UNDEFINED'
+  }`
+);
+console.log(
+  `   process.env.SUPABASE_KEY       = ${
+    process.env.SUPABASE_KEY ? '✅ SET' : '❌ UNDEFINED'
+  }`
+);
+console.log(
+  `   process.env.FB_VERIFY_TOKEN    = ${
+    process.env.FB_VERIFY_TOKEN ? '✅ SET' : '❌ UNDEFINED'
+  }`
+);
+console.log(
+  `   process.env.FB_PAGE_ACCESS_TOKEN = ${
+    process.env.FB_PAGE_ACCESS_TOKEN ? '✅ SET' : '❌ UNDEFINED'
+  }`
+);
+
+console.log('\n═══════════════════════════════════════════════════════\n');
+
+// ═══════════════════════════════════════════════════════════════
+// VALIDATION
+// ═══════════════════════════════════════════════════════════════
 const REQUIRED_ENV = ['SUPABASE_URL', 'SUPABASE_KEY'];
 const missing = REQUIRED_ENV.filter((key) => !process.env[key]);
 
@@ -16,28 +79,21 @@ if (missing.length > 0) {
   console.error('❌ Missing required environment variables:');
   missing.forEach((key) => console.error(`   - ${key}`));
   console.error('\n👉 Add them in Render → Your Service → Environment.');
+  console.error(
+    '👉 Then click "Save Changes" and "Manual Deploy → Deploy latest commit".\n'
+  );
   process.exit(1);
 }
 
-console.log('✅ Environment variables loaded');
+console.log('✅ Environment variables validated');
 console.log(`   SUPABASE_URL: ${process.env.SUPABASE_URL}`);
 console.log(
-  `   SUPABASE_KEY: ${
-    process.env.SUPABASE_KEY
-      ? '****' + process.env.SUPABASE_KEY.slice(-4)
-      : 'MISSING'
-  }`
-);
-console.log(
-  `   FB_VERIFY_TOKEN: ${process.env.FB_VERIFY_TOKEN ? 'set' : 'missing (webhook disabled)'}`
-);
-console.log(
-  `   FB_PAGE_ACCESS_TOKEN: ${
-    process.env.FB_PAGE_ACCESS_TOKEN ? 'set' : 'missing (bot disabled)'
-  }`
+  `   SUPABASE_KEY: ****${process.env.SUPABASE_KEY.slice(-4)}\n`
 );
 
-// ─── Initialize Supabase ──────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════
+// SUPABASE CLIENT
+// ═══════════════════════════════════════════════════════════════
 const supabase = createClient(
   process.env.SUPABASE_URL,
   process.env.SUPABASE_KEY,
@@ -47,12 +103,13 @@ const supabase = createClient(
   }
 );
 
-// ─── Initialize Express ───────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════
+// EXPRESS APP
+// ═══════════════════════════════════════════════════════════════
 const app = express();
 app.use(cors());
 app.use(express.json({ limit: '1mb' }));
 
-// Request logger
 app.use((req, _res, next) => {
   console.log(`[${new Date().toISOString()}] ${req.method} ${req.path}`);
   next();
@@ -70,8 +127,7 @@ app.get('/health', (_req, res) => {
 });
 
 // ═══════════════════════════════════════════════════════════════
-// ATTENDANCE SYNC ENDPOINT
-// Receives attendance records from the Flutter app.
+// ATTENDANCE SYNC
 // ═══════════════════════════════════════════════════════════════
 app.post('/api/sync', async (req, res) => {
   try {
@@ -89,7 +145,6 @@ app.post('/api/sync', async (req, res) => {
       idempotencyKey,
     } = req.body;
 
-    // Basic validation
     if (!classId || !date || !Array.isArray(presentStudents)) {
       return res.status(400).json({
         success: false,
@@ -98,10 +153,9 @@ app.post('/api/sync', async (req, res) => {
     }
 
     console.log(
-      `📥 Sync received: ${classId} · ${date} · ${presentStudents.length} present`
+      `📥 Sync: ${classId} · ${date} · ${presentStudents.length} present`
     );
 
-    // Idempotency: if key exists, return existing record
     if (idempotencyKey) {
       const { data: existing } = await supabase
         .from('attendance')
@@ -110,7 +164,7 @@ app.post('/api/sync', async (req, res) => {
         .maybeSingle();
 
       if (existing) {
-        console.log(`♻️ Duplicate submission skipped (key: ${idempotencyKey})`);
+        console.log(`♻️ Duplicate skipped (key: ${idempotencyKey})`);
         return res.status(200).json({
           success: true,
           message: 'Already synced',
@@ -120,7 +174,6 @@ app.post('/api/sync', async (req, res) => {
       }
     }
 
-    // Insert into Supabase
     const { data, error } = await supabase
       .from('attendance')
       .insert([
@@ -146,7 +199,6 @@ app.post('/api/sync', async (req, res) => {
 
     console.log(`✅ Saved to Supabase: id=${data.id}`);
 
-    // Fire-and-forget: send Messenger report (if bot configured)
     if (process.env.FB_PAGE_ACCESS_TOKEN) {
       sendAttendanceReportToTeacher({
         classId,
@@ -174,10 +226,8 @@ app.post('/api/sync', async (req, res) => {
 });
 
 // ═══════════════════════════════════════════════════════════════
-// FACEBOOK MESSENGER WEBHOOK
+// FACEBOOK WEBHOOK
 // ═══════════════════════════════════════════════════════════════
-
-// Webhook verification (GET)
 app.get('/webhook', (req, res) => {
   const VERIFY_TOKEN =
     process.env.FB_VERIFY_TOKEN || 'ict11c_secret_token_123';
@@ -194,7 +244,6 @@ app.get('/webhook', (req, res) => {
   }
 });
 
-// Webhook event receiver (POST)
 app.post('/webhook', async (req, res) => {
   const body = req.body;
 
@@ -202,7 +251,6 @@ app.post('/webhook', async (req, res) => {
     return res.sendStatus(404);
   }
 
-  // Acknowledge immediately (Facebook requires < 20s)
   res.status(200).send('EVENT_RECEIVED');
 
   try {
@@ -210,28 +258,20 @@ app.post('/webhook', async (req, res) => {
       const webhookEvent = entry.messaging?.[0];
       if (!webhookEvent) continue;
 
-      // Capture sender PSID
       const senderPsid = webhookEvent.sender?.id;
       if (!senderPsid) continue;
 
-      // Handle incoming message
       if (webhookEvent.message) {
         const messageText = webhookEvent.message.text;
         console.log(`💬 Message from ${senderPsid}: ${messageText}`);
-
-        // Store teacher PSID if new
         await captureTeacherPsid(senderPsid, webhookEvent);
-
-        // Respond to teacher commands
         await handleTeacherCommand(senderPsid, messageText);
       }
 
-      // Handle delivery receipts
       if (webhookEvent.delivery) {
         console.log(`📬 Delivered to ${senderPsid}`);
       }
 
-      // Handle read receipts
       if (webhookEvent.read) {
         console.log(`👁️ Read by ${senderPsid}`);
       }
@@ -244,7 +284,6 @@ app.post('/webhook', async (req, res) => {
 // ═══════════════════════════════════════════════════════════════
 // MESSENGER HELPERS
 // ═══════════════════════════════════════════════════════════════
-
 async function captureTeacherPsid(psid, event) {
   try {
     const { error } = await supabase.from('teachers').upsert(
@@ -255,7 +294,6 @@ async function captureTeacherPsid(psid, event) {
       { onConflict: 'psid', ignoreDuplicates: false }
     );
     if (error && error.code !== '42P01') {
-      // 42P01 = table doesn't exist yet
       console.warn('⚠️ Could not save teacher PSID:', error.message);
     }
   } catch (err) {
@@ -347,7 +385,7 @@ async function buildAbsentReport() {
 async function sendMessengerMessage(psid, text) {
   const token = process.env.FB_PAGE_ACCESS_TOKEN;
   if (!token) {
-    console.warn('⚠️ FB_PAGE_ACCESS_TOKEN not set — cannot send message');
+    console.warn('⚠️ FB_PAGE_ACCESS_TOKEN not set');
     return;
   }
 
@@ -380,13 +418,12 @@ async function sendAttendanceReportToTeacher({
   checkerName,
   totalStudents,
 }) {
-  // Fetch all registered teachers
   const { data: teachers, error } = await supabase
     .from('teachers')
     .select('psid');
 
   if (error || !teachers || teachers.length === 0) {
-    console.log('ℹ️ No teachers registered yet — skipping Messenger send');
+    console.log('ℹ️ No teachers registered — skipping Messenger send');
     return;
   }
 
